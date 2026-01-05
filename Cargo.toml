@@ -1,0 +1,49 @@
+[package]
+name = "llm_json_formatter"
+version = "0.1.0"
+edition = "2021"
+description = "LLM-optimized JSON formatter for better readability and token efficiency"
+license = "MIT"
+repository = "https://github.com/luw2007/llm_json_formatter"
+homepage = "https://github.com/luw2007/llm_json_formatter"
+documentation = "https://docs.rs/llm_json_formatter"
+readme = "README.md"
+keywords = ["json", "formatter", "llm", "ai", "token-efficiency"]
+categories = ["command-line-utilities", "encoding", "text-processing"]
+authors = ["luw2007 <luw2007@gmail.com>"]
+rust-version = "1.70"
+exclude = [
+    ".trae/",
+    ".vscode/",
+    "target/",
+    "mcp-server/",
+    "benches/",
+    "examples/",
+    "docs/",
+]
+
+[[bin]]
+name = "jf"
+path = "src/main.rs"
+
+[lib]
+name = "llm_json_formatter"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+clap = { version = "4.4", features = ["derive"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+
+[[bench]]
+name = "formatter_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true

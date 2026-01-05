@@ -1,0 +1,22 @@
+{
+  "users_by_id": {
+    "u001": {"name": "Alice", "age": 30},
+    "u002": {"name": "Bob", "age": 25},
+    "u003": {"name": "Charlie", "age": 35}
+  },
+  "config": {
+    "theme": "dark",
+    "language": "en",
+    "timezone": "UTC"
+  },
+  "nested_map": {
+    "group_a": {
+      "setting1": "value1",
+      "setting2": "value2"
+    },
+    "group_b": {
+      "setting1": "value3",
+      "setting2": "value4"
+    }
+  }
+}

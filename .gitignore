@@ -1,0 +1,19 @@
+# Build artifacts
+/target/
+Cargo.lock
+
+# IDE
+.trae/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# MCP server
+mcp-server/node_modules/
+mcp-server/dist/
