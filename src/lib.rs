@@ -137,8 +137,9 @@ impl JsonIndex {
 
     fn preview(val: &Value) -> String {
         let s = serde_json::to_string(val).unwrap_or_default();
-        if s.len() > 100 {
-            format!("{}...", &s[..100])
+        if s.chars().count() > 100 {
+            let truncated: String = s.chars().take(100).collect();
+            format!("{}...", truncated)
         } else {
             s
         }
@@ -175,7 +176,7 @@ impl SchemaStats {
     }
 
     fn traverse(val: &Value, path: String, stats: &mut HashMap<String, SchemaNode>) {
-        let len = serde_json::to_string(val).map(|s| s.len()).unwrap_or(0);
+        let len = serde_json::to_string(val).map(|s| s.chars().count()).unwrap_or(0);
         let is_object = matches!(val, Value::Object(_));
         let entry = stats.entry(path.clone()).or_insert_with(|| SchemaNode {
             lengths: Vec::new(),
@@ -229,8 +230,9 @@ impl SchemaStats {
 
     fn preview(val: &Value) -> String {
         let s = serde_json::to_string(val).unwrap_or_default();
-        if s.len() > 50 {
-            format!("{}...", &s[..50])
+        if s.chars().count() > 50 {
+            let truncated: String = s.chars().take(50).collect();
+            format!("{}...", truncated)
         } else {
             s
         }
@@ -508,7 +510,7 @@ impl LlmJsonFormatter {
             for s in sample_list {
                 prompt.push_str(&format!("  - {}\n", s));
             }
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         prompt.push_str("Output ONLY a JSON array of entity paths. No explanation, no markdown, no code blocks.\n");
@@ -544,7 +546,7 @@ impl LlmJsonFormatter {
         };
 
         let compact = serde_json::to_string(value).unwrap_or_default();
-        if compact.len() <= limit {
+        if compact.chars().count() <= limit {
             return compact;
         }
 
@@ -561,12 +563,12 @@ impl LlmJsonFormatter {
                     s.push_str(&self.indent(depth + 1));
                     s.push_str(&self.format_smart(item, depth + 1, new_path_pattern.clone()));
                     if i < arr.len() - 1 {
-                        s.push_str(",");
+                        s.push(',');
                     }
-                    s.push_str("\n");
+                    s.push('\n');
                 }
                 s.push_str(&self.indent(depth));
-                s.push_str("]");
+                s.push(']');
                 s
             }
             Value::Object(obj) => {
@@ -595,12 +597,12 @@ impl LlmJsonFormatter {
                     s.push_str(&format!("\"{}\": ", k));
                     s.push_str(&self.format_smart(v, depth + 1, new_path));
                     if i < obj.len() - 1 {
-                        s.push_str(",");
+                        s.push(',');
                     }
-                    s.push_str("\n");
+                    s.push('\n');
                 }
                 s.push_str(&self.indent(depth));
-                s.push_str("}");
+                s.push('}');
                 s
             }
             _ => compact,
