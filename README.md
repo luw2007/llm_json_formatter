@@ -8,6 +8,7 @@ A JSON formatting tool optimized for LLM consumption, balancing readability and 
 ## Why jf?
 
 When feeding JSON data to LLMs, you face a trade-off:
+
 - **Pretty format**: High readability but wastes tokens on whitespace
 - **Compact format**: Token efficient but hard to read
 
@@ -42,7 +43,16 @@ cargo install llm_json_formatter
 ## Quick Start
 
 ```bash
-# Default formatting (auto-detect entities)
+# Quick format - shortcut (automatically uses format command)
+jf data.json
+
+# Format multiple files
+jf file1.json file2.json file3.json
+
+# Pipe input - shortcut (automatically uses format command)
+echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf
+
+# Default formatting (auto-detect entities) - explicit command
 echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf format
 
 # Output:
@@ -64,19 +74,22 @@ jf format [OPTIONS] [-i <INPUT>] [-o <OUTPUT>]
 
 **Options**:
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `-m, --mode` | smart | Format mode: `smart` / `compact` / `pretty` |
-| `--sort` | alphabetic | Key sorting: `alphabetic` / `smart` |
-| `--indent` | 2 | Indentation spaces |
-| `--inline-limit` | 80 | Max line length for inline objects in Smart mode |
-| `--array-item-inline-limit` | 2048 | Max line length for array items (entities) |
-| `--entity-threshold` | 2000 | Length threshold for auto-detected entities |
-| `--entities` | - | Comma-separated or JSON array of entity paths |
+| Option                      | Default    | Description                                      |
+| --------------------------- | ---------- | ------------------------------------------------ |
+| `-m, --mode`                | smart      | Format mode: `smart` / `compact` / `pretty`      |
+| `--sort`                    | alphabetic | Key sorting: `alphabetic` / `smart`              |
+| `--indent`                  | 2          | Indentation spaces                               |
+| `--inline-limit`            | 80         | Max line length for inline objects in Smart mode |
+| `--array-item-inline-limit` | 2048       | Max line length for array items (entities)       |
+| `--entity-threshold`        | 2000       | Length threshold for auto-detected entities      |
+| `--entities`                | -          | Comma-separated or JSON array of entity paths    |
 
 **Examples**:
 
 ```bash
+# Quick format (shortcut, defaults to smart mode)
+jf data.json
+
 # Compact mode (minimum tokens)
 jf format -i data.json --mode compact
 
@@ -111,6 +124,7 @@ jf prompt -i data.json
 ```
 
 **Output**:
+
 ```
 Analyze the JSON schema below and identify 'Business Entities'...
 
@@ -144,6 +158,7 @@ echo '{"users":[{"id":1,"name":"Alice"}],"config":{"debug":true}}' | jf schema
 ```
 
 **Output**:
+
 ```
 {
   "config": {
@@ -165,6 +180,7 @@ jf analyze [-i <INPUT>]
 ```
 
 **Output**:
+
 ```
 JSON Analysis:
   Byte Size: 1234 bytes
@@ -222,11 +238,11 @@ jf format -i data.json --entities '["users[*]","orders[*]"]'
 
 ## Format Mode Comparison
 
-| Mode | Description | Token Efficiency | Readability |
-|------|-------------|------------------|-------------|
-| **Smart** | Entities inline, structure expanded | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
-| **Compact** | Fully compressed | ⭐⭐⭐⭐⭐ | ⭐ |
-| **Pretty** | Fully expanded | ⭐⭐ | ⭐⭐⭐⭐⭐ |
+| Mode        | Description                         | Token Efficiency | Readability |
+| ----------- | ----------------------------------- | ---------------- | ----------- |
+| **Smart**   | Entities inline, structure expanded | ⭐⭐⭐⭐         | ⭐⭐⭐⭐    |
+| **Compact** | Fully compressed                    | ⭐⭐⭐⭐⭐       | ⭐          |
+| **Pretty**  | Fully expanded                      | ⭐⭐             | ⭐⭐⭐⭐⭐  |
 
 ## Library Usage
 
@@ -247,10 +263,10 @@ fn main() {
         mode: FormatMode::Smart,
         ..Default::default()
     };
-    
+
     let mut formatter = LlmJsonFormatter::new(config);
     let json = r#"{"users":[{"id":1,"name":"Alice"}]}"#;
-    
+
     let result = formatter.format(json).unwrap();
     println!("{}", result);
 }
@@ -266,14 +282,14 @@ fn main() {
     let mut entities = HashSet::new();
     entities.insert("users[*]".to_string());
     entities.insert("orders[*]".to_string());
-    
+
     let config = Config {
         mode: FormatMode::Smart,
         entities,
         entity_threshold: 0, // Disable auto detection
         ..Default::default()
     };
-    
+
     let mut formatter = LlmJsonFormatter::new(config);
     let result = formatter.format(json).unwrap();
 }
@@ -305,7 +321,7 @@ use llm_json_formatter::{LlmJsonFormatter, Config};
 fn main() {
     let formatter = LlmJsonFormatter::new(Config::default());
     let metadata = formatter.get_metadata(json).unwrap();
-    
+
     println!("Size: {} bytes", metadata.byte_size);
     println!("Depth: {}", metadata.depth);
     println!("Objects: {}", metadata.object_count);
@@ -337,7 +353,30 @@ pub struct Config {
 ### SortStrategy
 
 - `Alphabetic`: Sort keys alphabetically
-- `Smart`: Sort by importance (id/name/type first, _internal last)
+- `Smart`: Sort by importance (id/name/type first, \_internal last)
+
+## Testing
+
+Run all tests:
+
+```bash
+# Run all tests
+cargo test
+
+# Run integration tests only
+cargo test --test cli_tests
+
+# Run with output
+cargo test -- --nocapture
+```
+
+The test suite includes 17+ integration tests covering:
+
+- ✅ Shortcut commands (single file, multiple files, pipe input)
+- ✅ Explicit format commands with various modes
+- ✅ All CLI subcommands (analyze, schema, paths, search)
+- ✅ Error handling (invalid JSON, nonexistent files)
+- ✅ Help and version flags
 
 ## Benchmarks
 

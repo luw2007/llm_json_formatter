@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2025-01-06
+
+### Added
+
+- **Shortcut Command**: Support direct file path as argument for quick formatting
+  - Usage: `jf data.json` automatically executes `jf format -i data.json`
+  - Support multiple files: `jf file1.json file2.json file3.json`
+  - Defaults to smart mode with auto entity detection
+- **Pipe Input Shortcut**: Support pipe input without explicit format command
+  - Usage: `echo '{}' | jf` automatically executes `jf format`
+  - Simplifies common pipe input operations
+- **Comprehensive Test Suite**: Added 17+ integration tests
+  - Tests cover all shortcut commands (file, pipe input)
+  - Tests cover all CLI subcommands and modes
+  - Tests include error handling scenarios
+
 ## [0.1.0] - 2025-01-05
 
 ### Added
@@ -19,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pretty Format Mode**: Standard indented output for maximum readability
 - **Key Sorting Strategies**:
   - `alphabetic`: Sort keys alphabetically (default)
-  - `smart`: Sort by importance (id/name/type first, _internal last)
+  - `smart`: Sort by importance (id/name/type first, \_internal last)
 - **Schema Extraction**: Generate compact type schemas from JSON data
   - Automatic map detection for homogeneous object values
   - Merged schema for objects with different field sets

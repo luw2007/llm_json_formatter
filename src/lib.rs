@@ -25,9 +25,10 @@ pub struct Metadata {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SortStrategy {
-    #[default]
     Alphabetic,
+    #[default]
     Smart,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -53,7 +54,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mode: FormatMode::default(),
-            sort_strategy: SortStrategy::default(),
+            sort_strategy: SortStrategy::Smart,
             indent: 2,
             inline_limit: 80,
             array_item_inline_limit: 2048,
@@ -176,7 +177,9 @@ impl SchemaStats {
     }
 
     fn traverse(val: &Value, path: String, stats: &mut HashMap<String, SchemaNode>) {
-        let len = serde_json::to_string(val).map(|s| s.chars().count()).unwrap_or(0);
+        let len = serde_json::to_string(val)
+            .map(|s| s.chars().count())
+            .unwrap_or(0);
         let is_object = matches!(val, Value::Object(_));
         let entry = stats.entry(path.clone()).or_insert_with(|| SchemaNode {
             lengths: Vec::new(),
@@ -192,7 +195,8 @@ impl SchemaStats {
             Value::Object(obj) => {
                 // Check if this object is a "map" (all values have same base type)
                 let is_map = if obj.len() >= 2 {
-                    let base_types: std::collections::HashSet<_> = obj.values()
+                    let base_types: std::collections::HashSet<_> = obj
+                        .values()
                         .map(|v| match v {
                             Value::Null => "null",
                             Value::Bool(_) => "boolean",
@@ -206,7 +210,7 @@ impl SchemaStats {
                 } else {
                     false
                 };
-                
+
                 for (k, v) in obj {
                     let new_path = if is_map {
                         format!("{}[*]", path)
@@ -283,7 +287,8 @@ fn get_type_signature(value: &Value) -> String {
             if obj.is_empty() {
                 "{}".to_string()
             } else {
-                let mut sigs: Vec<_> = obj.iter()
+                let mut sigs: Vec<_> = obj
+                    .iter()
                     .map(|(k, v)| format!("{}:{}", k, get_type_signature(v)))
                     .collect();
                 sigs.sort();
@@ -314,6 +319,27 @@ fn get_base_type(value: &Value) -> &'static str {
     }
 }
 
+fn calculate_key_weight(key: &str) -> i32 {
+    let mut weight = 0;
+
+    if matches!(
+        key,
+        "id" | "name" | "type" | "status" | "title" | "key" | "value"
+    ) {
+        weight += 100;
+    }
+
+    if key.starts_with('_') || key.contains("internal") {
+        weight -= 50;
+    }
+
+    if key.contains("debug") || key.contains("test") {
+        weight -= 30;
+    }
+
+    weight
+}
+
 pub fn generate_schema(value: &Value, indent: usize) -> String {
     let prefix = "  ".repeat(indent);
     match value {
@@ -342,7 +368,7 @@ pub fn generate_schema(value: &Value, indent: usize) -> String {
                     let sig = get_type_signature(v);
                     type_groups.entry(sig).or_default().push((k, v));
                 }
-                
+
                 // Case 1: All values have exactly same type signature
                 if type_groups.len() == 1 && obj.len() >= 2 {
                     let (_, items) = type_groups.iter().next().unwrap();
@@ -350,31 +376,42 @@ pub fn generate_schema(value: &Value, indent: usize) -> String {
                     let val_schema = generate_schema(sample_val, indent + 1);
                     return format!("map[string]{}", val_schema);
                 }
-                
+
                 // Case 2: All values are objects (but with different fields) - merge them
                 let all_objects = obj.values().all(|v| matches!(v, Value::Object(_)));
                 if all_objects && obj.len() >= 2 {
                     let objects_iter = obj.values().filter_map(|v| {
-                        if let Value::Object(o) = v { Some(o) } else { None }
+                        if let Value::Object(o) = v {
+                            Some(o)
+                        } else {
+                            None
+                        }
                     });
                     let merged = merge_objects(objects_iter);
                     let merged_value = Value::Object(merged);
                     let val_schema = generate_schema(&merged_value, indent + 1);
                     return format!("map[string]{}", val_schema);
                 }
-                
+
                 // Case 3: All values are same primitive type
                 let base_types: HashSet<_> = obj.values().map(get_base_type).collect();
                 if base_types.len() == 1 && obj.len() >= 2 {
                     let base_type = base_types.into_iter().next().unwrap();
                     return format!("map[string]{}", base_type);
                 }
-                
+
                 // Default: enumerate all keys
                 let mut lines = vec!["{".to_string()];
                 let inner_prefix = "  ".repeat(indent + 1);
                 let mut keys: Vec<_> = obj.keys().collect();
-                keys.sort();
+                keys.sort_by(|a, b| {
+                    let weight_a = calculate_key_weight(a);
+                    let weight_b = calculate_key_weight(b);
+                    match weight_b.cmp(&weight_a) {
+                        std::cmp::Ordering::Equal => a.cmp(b),
+                        other => other,
+                    }
+                });
                 for key in keys {
                     let val = &obj[key];
                     let val_schema = generate_schema(val, indent + 1);
@@ -497,7 +534,7 @@ impl LlmJsonFormatter {
 
         let mut prompt = String::new();
         prompt.push_str("Analyze the JSON schema below and identify 'Business Entities' - array items that represent meaningful data records (e.g., user, order, product) suitable for single-line display.\n\n");
-        
+
         prompt.push_str("Schema:\n");
         prompt.push_str(&generate_schema(&value, 0));
         prompt.push_str("\n\n");
@@ -530,12 +567,18 @@ impl LlmJsonFormatter {
             false
         };
 
-        let is_simple_value = matches!(value, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_));
+        let is_simple_value = matches!(
+            value,
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+        );
 
         let is_simple_map = match value {
-            Value::Object(obj) if obj.len() >= 2 => {
-                obj.values().all(|v| matches!(v, Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)))
-            }
+            Value::Object(obj) if obj.len() >= 2 => obj.values().all(|v| {
+                matches!(
+                    v,
+                    Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_)
+                )
+            }),
             _ => false,
         };
 
@@ -558,7 +601,7 @@ impl LlmJsonFormatter {
                 }
                 let mut s = String::from("[\n");
                 let new_path_pattern = format!("{}[*]", path);
-                
+
                 for (i, item) in arr.iter().enumerate() {
                     s.push_str(&self.indent(depth + 1));
                     s.push_str(&self.format_smart(item, depth + 1, new_path_pattern.clone()));
@@ -575,14 +618,14 @@ impl LlmJsonFormatter {
                 if obj.is_empty() {
                     return "{}".to_string();
                 }
-                
+
                 let is_map = if obj.len() >= 2 {
                     let base_types: HashSet<_> = obj.values().map(get_base_type).collect();
                     base_types.len() == 1
                 } else {
                     false
                 };
-                
+
                 let mut s = String::from("{\n");
                 for (i, (k, v)) in obj.iter().enumerate() {
                     let new_path = if is_map {
@@ -592,7 +635,7 @@ impl LlmJsonFormatter {
                     } else {
                         format!("{}.{}", path, k)
                     };
-                    
+
                     s.push_str(&self.indent(depth + 1));
                     s.push_str(&format!("\"{}\": ", k));
                     s.push_str(&self.format_smart(v, depth + 1, new_path));
@@ -646,15 +689,22 @@ impl LlmJsonFormatter {
                     }
                 });
             }
+            SortStrategy::None => {}
         }
 
-        items.into_iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        items
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
     }
 
     fn calculate_weight(key: &str) -> i32 {
         let mut weight = 0;
 
-        if matches!(key, "id" | "name" | "type" | "status" | "title" | "key" | "value") {
+        if matches!(
+            key,
+            "id" | "name" | "type" | "status" | "title" | "key" | "value"
+        ) {
             weight += 100;
         }
 
@@ -682,22 +732,22 @@ mod tests {
     #[test]
     fn test_smart_format_small_object() {
         let mut formatter = LlmJsonFormatter::new(Config::default());
-        let input = r#"{"name":"Alice","age":30}"#;
+        let input = r#"{"age":30,"name":"Alice"}"#;
         let result = formatter.format(input).unwrap();
-        assert_eq!(result, r#"{"age":30,"name":"Alice"}"#);
+        assert_eq!(result, r#"{"name":"Alice","age":30}"#);
     }
 
     #[test]
     fn test_smart_format_nested_array() {
         let mut formatter = LlmJsonFormatter::new(Config {
-            inline_limit: 30, // Low limit to force structure expansion
+            inline_limit: 30,       // Low limit to force structure expansion
             entity_threshold: 2000, // High enough to cover inner objects
             ..Default::default()
         });
         // Short enough to be inline
         let input = r#"{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}"#;
         let result = formatter.format(input).unwrap();
-        
+
         // "users[*]" P90 length is ~23.
         // 23 <= 2000, so it's an entity.
         // Entity limit is 2048.
@@ -707,7 +757,7 @@ mod tests {
         // The array itself is formatted with path "users".
         // Its length is > 30 (input is ~56).
         // So it expands.
-        
+
         let expected = r#"{
   "users": [
     {"id":1,"name":"Alice"},
@@ -721,16 +771,16 @@ mod tests {
     fn test_forced_entities() {
         let mut entities = HashSet::new();
         entities.insert("users[*]".to_string());
-        
+
         let mut formatter = LlmJsonFormatter::new(Config {
             inline_limit: 10, // Very low
             entities,
             ..Default::default()
         });
-        
+
         let input = r#"{"users":[{"id":1,"name":"LongNameAlice"},{"id":2,"name":"LongNameBob"}]}"#;
         let result = formatter.format(input).unwrap();
-        
+
         // Even though inline_limit is 10, entities should be compact (using default array_item_inline_limit 2048)
         let expected = r#"{
   "users": [
@@ -752,5 +802,16 @@ mod tests {
 
         // Should be compact because it's short
         assert_eq!(result, r#"{"id":100,"name":"Alice","zzz":1,"_internal":2}"#);
+    }
+
+    #[test]
+    fn test_no_sort() {
+        let mut formatter = LlmJsonFormatter::new(Config {
+            sort_strategy: SortStrategy::None,
+            ..Default::default()
+        });
+        let input = r#"{"z":1,"a":2,"c":3}"#;
+        let result = formatter.format(input).unwrap();
+        assert_eq!(result, r#"{"z":1,"a":2,"c":3}"#);
     }
 }
