@@ -14,7 +14,7 @@ fn main() {
     let compact = serde_json::to_string(&data).unwrap();
     println!("{}", compact);
     println!("字符数: {}\n", compact.len());
-    
+
     println!("=== to_string_pretty (美化格式) ===");
     let pretty = serde_json::to_string_pretty(&data).unwrap();
     println!("{}", pretty);

@@ -1,14 +1,19 @@
 # Build artifacts
 /target/
 Cargo.lock
+dist/
 
 # IDE
 .trae/
+.jieli/
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+
+# Local logs
+log/
 
 # OS
 .DS_Store

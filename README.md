@@ -25,6 +25,23 @@ When feeding JSON data to LLMs, you face a trade-off:
 
 ## Installation
 
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap luw2007/tap
+brew install jf
+```
+
+### Prebuilt Binaries (GitHub Releases)
+
+Download the matching archive from GitHub Releases, then extract and move `jf` into your `PATH`.
+
+```bash
+tar -xzf jf-vX.Y.Z-<target>.tar.gz
+sudo install -m 0755 jf /usr/local/bin/jf
+jf --help
+```
+
 ### From Source
 
 ```bash

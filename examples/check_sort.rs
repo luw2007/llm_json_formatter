@@ -1,9 +1,8 @@
-
 use llm_json_formatter::{Config, LlmJsonFormatter, SortStrategy};
 
 fn main() {
     let json = r#"{"z": 1, "a": 2, "c": 3}"#;
-    
+
     // Default (Alphabetic)
     let mut formatter = LlmJsonFormatter::new(Config::default());
     let formatted_default = formatter.format(json).unwrap();

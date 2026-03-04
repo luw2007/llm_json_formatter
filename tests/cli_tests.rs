@@ -139,9 +139,7 @@ fn test_invalid_json_file() {
     fs::write(temp_file, "{invalid json}").unwrap();
 
     let mut cmd = Command::cargo_bin("jf").unwrap();
-    cmd.arg(temp_file)
-        .assert()
-        .failure();
+    cmd.arg(temp_file).assert().failure();
 
     fs::remove_file(temp_file).unwrap();
 }
