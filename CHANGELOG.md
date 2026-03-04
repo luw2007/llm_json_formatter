@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-03-04
+
+### Changed
+
+- **Release Infrastructure**: Add GitHub Releases packaging and Homebrew binary distribution
+  - Add `scripts/package_release.sh` for automated release packaging
+  - Add Homebrew formula template for binary installation
+  - Add comprehensive release documentation in `docs/release.md`
+  - Update README with Homebrew and binary installation instructions
+
+### Fixed
+
+- Fix git commit history to use correct author email (luw2007@gmail.com)
+
 ## [0.1.1] - 2025-01-06
 
 ### Added
