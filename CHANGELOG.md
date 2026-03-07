@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-03-07
+
+### Fixed
+
+- **Homebrew Distribution**: Prepare a patch release for the refreshed GitHub Release artifacts
+  - Bump the crate and release metadata to `0.1.3`
+  - Align the Homebrew formula template version with the next release
+  - Avoid `brew install jf` checksum failures caused by stale `0.1.2` release packaging
+
 ## [0.1.2] - 2026-03-04
 
 ### Changed
