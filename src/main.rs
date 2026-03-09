@@ -134,6 +134,9 @@ enum Commands {
 
         #[arg(short, long, help = "JSON path to search")]
         path: String,
+
+        #[arg(short, long, help = "Output full JSON value instead of preview")]
+        full: bool,
     },
 
     #[command(about = "List all available paths in JSON")]
@@ -400,7 +403,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
             }
         }
 
-        Commands::Search { input, path } => {
+        Commands::Search { input, path, full } => {
             let json = match read_input(input) {
                 Ok(j) => j,
                 Err(e) => {
@@ -412,9 +415,13 @@ fn execute_command(command: Commands) -> io::Result<()> {
             match JsonIndex::build(&json) {
                 Ok(index) => {
                     if let Some(info) = index.search(&path) {
-                        println!("Path: {}", path);
-                        println!("Type: {:?}", info.value_type);
-                        println!("Preview: {}", info.preview);
+                        if full {
+                            println!("{}", serde_json::to_string_pretty(&info.full_value).unwrap_or_default());
+                        } else {
+                            println!("Path: {}", path);
+                            println!("Type: {:?}", info.value_type);
+                            println!("Preview: {}", info.preview);
+                        }
                         Ok(())
                     } else {
                         eprintln!("Path not found: {}", path);

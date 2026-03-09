@@ -68,6 +68,7 @@ impl Default for Config {
 pub struct PathInfo {
     pub value_type: ValueType,
     pub preview: String,
+    pub full_value: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +111,7 @@ impl JsonIndex {
         let info = PathInfo {
             value_type: ValueType::from(val),
             preview: Self::preview(val),
+            full_value: val.clone(),
         };
         if !path.is_empty() {
             map.insert(path.clone(), info);
