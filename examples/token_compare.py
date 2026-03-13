@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
+import os
 import subprocess
+import tempfile
 import tiktoken
 
 enc = tiktoken.get_encoding("cl100k_base")
@@ -40,17 +42,19 @@ def generate_medium_json(num_users: int = 50) -> dict:
     }
 
 def format_with_jf(json_str: str, mode: str, args: list = None) -> str:
-    cmd = ["./target/release/jf", "format", "--mode", mode]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tmp:
+        tmp.write(json_str)
+        input_file = tmp.name
+
+    cmd = ["./target/release/jf", "format", input_file, "--mode", mode]
     if args:
         cmd.extend(args)
-        
-    result = subprocess.run(
-        cmd,
-        input=json_str,
-        capture_output=True,
-        text=True
-    )
-    return result.stdout.strip()
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return result.stdout.strip()
+    finally:
+        os.unlink(input_file)
 
 def print_comparison(title: str, baseline: str, baseline_name: str, jf_output: str, jf_name: str):
     baseline_tokens = count_tokens(baseline)

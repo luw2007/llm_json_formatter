@@ -21,6 +21,7 @@ When feeding JSON data to LLMs, you face a trade-off:
 - **LLM-Assisted Labeling**: Generate prompts for LLM to identify entities, with manual override support
 - **Smart Key Sorting**: Alphabetic or weighted sorting (id/name first)
 - **Multiple Format Modes**: Smart / Compact / Pretty
+- **JSON5 Support**: Accept JSON5 input and optionally emit JSON5 output
 - **Schema Extraction**: Generate compact type schemas from JSON data
 
 ## Installation
@@ -66,11 +67,8 @@ jf data.json
 # Format multiple files
 jf file1.json file2.json file3.json
 
-# Pipe input - shortcut (automatically uses format command)
-echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf
-
 # Default formatting (auto-detect entities) - explicit command
-echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf format
+jf format data.json
 
 # Output:
 # {
@@ -86,7 +84,7 @@ echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf format
 ### format - Format JSON
 
 ```bash
-jf format [OPTIONS] [-i <INPUT>] [-o <OUTPUT>]
+jf format <INPUT> [OPTIONS] [-o <OUTPUT>]
 ```
 
 **Options**:
@@ -100,6 +98,7 @@ jf format [OPTIONS] [-i <INPUT>] [-o <OUTPUT>]
 | `--array-item-inline-limit` | 2048       | Max line length for array items (entities)       |
 | `--entity-threshold`        | 2000       | Length threshold for auto-detected entities      |
 | `--entities`                | -          | Comma-separated or JSON array of entity paths    |
+| `--output-syntax`           | auto       | Output syntax: `auto` / `json` / `json5`         |
 
 **Examples**:
 
@@ -108,22 +107,28 @@ jf format [OPTIONS] [-i <INPUT>] [-o <OUTPUT>]
 jf data.json
 
 # Compact mode (minimum tokens)
-jf format -i data.json --mode compact
+jf format data.json --mode compact
 
 # Pretty mode (maximum readability)
-jf format -i data.json --mode pretty
+jf format data.json --mode pretty
 
 # Manually specify entities
-jf format -i data.json --entities "users[*],orders[*]"
+jf format data.json --entities "users[*],orders[*]"
 
 # JSON array format for entities
-jf format -i data.json --entities '["users[*]","orders[*]"]'
+jf format data.json --entities '["users[*]","orders[*]"]'
 
 # Disable auto entity detection
-jf format -i data.json --entity-threshold 0
+jf format data.json --entity-threshold 0
 
 # Smart key sorting (id/name first)
-jf format -i data.json --sort smart
+jf format data.json --sort smart
+
+# Auto output syntax (JSON in -> JSON out, JSON5 in -> JSON5 out)
+jf format data.json5 --mode compact --output-syntax auto
+
+# Force JSON5 output
+jf format data.json --mode compact --output-syntax json5
 ```
 
 ### prompt - Generate LLM Prompt
@@ -131,13 +136,13 @@ jf format -i data.json --sort smart
 Generate a prompt containing schema structure and samples for LLM to identify "business entities".
 
 ```bash
-jf prompt [-i <INPUT>]
+jf prompt <INPUT>
 ```
 
 **Example**:
 
 ```bash
-jf prompt -i data.json
+jf prompt data.json
 ```
 
 **Output**:
@@ -165,13 +170,13 @@ Output ONLY a JSON array of entity paths...
 Extract a compact type schema from JSON data.
 
 ```bash
-jf schema [-i <INPUT>]
+jf schema <INPUT>
 ```
 
 **Example**:
 
 ```bash
-echo '{"users":[{"id":1,"name":"Alice"}],"config":{"debug":true}}' | jf schema
+jf schema data.json
 ```
 
 **Output**:
@@ -193,7 +198,7 @@ echo '{"users":[{"id":1,"name":"Alice"}],"config":{"debug":true}}' | jf schema
 ### analyze - Analyze JSON Structure
 
 ```bash
-jf analyze [-i <INPUT>]
+jf analyze <INPUT>
 ```
 
 **Output**:
@@ -211,19 +216,19 @@ JSON Analysis:
 ### search - Path Query
 
 ```bash
-jf search [-i <INPUT>] -p <PATH>
+jf search <INPUT> -p <PATH>
 ```
 
 **Example**:
 
 ```bash
-echo '{"users":[{"id":1,"name":"Alice"}]}' | jf search -p "users[0].name"
+jf search data.json -p "users[0].name"
 ```
 
 ### paths - List All Paths
 
 ```bash
-jf paths [-i <INPUT>]
+jf paths <INPUT>
 ```
 
 ## Entity Detection
@@ -234,23 +239,23 @@ Based on schema analysis, calculate P90 length for each array path. If P90 ≤ `
 
 ```bash
 # Default threshold 2000
-jf format -i data.json
+jf format data.json
 
 # Stricter (only short objects count as entities)
-jf format -i data.json --entity-threshold 100
+jf format data.json --entity-threshold 100
 ```
 
 ### Option 2: LLM-Assisted Labeling
 
 ```bash
 # 1. Generate prompt
-jf prompt -i data.json > prompt.txt
+jf prompt data.json > prompt.txt
 
 # 2. Send to LLM, get entity list
 # LLM returns: ["users[*]", "orders[*]"]
 
 # 3. Format with labeled entities
-jf format -i data.json --entities '["users[*]","orders[*]"]'
+jf format data.json --entities '["users[*]","orders[*]"]'
 ```
 
 ## Format Mode Comparison
@@ -352,6 +357,7 @@ fn main() {
 ```rust
 pub struct Config {
     pub mode: FormatMode,           // Smart | Compact | Pretty
+    pub output_syntax: OutputSyntax, // Auto | Json | Json5
     pub sort_strategy: SortStrategy, // Alphabetic | Smart
     pub indent: usize,              // Default: 2
     pub inline_limit: usize,        // Default: 80
@@ -372,6 +378,12 @@ pub struct Config {
 - `Alphabetic`: Sort keys alphabetically
 - `Smart`: Sort by importance (id/name/type first, \_internal last)
 
+### OutputSyntax
+
+- `Auto`: Follow detected input syntax (JSON or JSON5)
+- `Json`: Always emit JSON
+- `Json5`: Always emit JSON5
+
 ## Testing
 
 Run all tests:
@@ -389,7 +401,7 @@ cargo test -- --nocapture
 
 The test suite includes 17+ integration tests covering:
 
-- ✅ Shortcut commands (single file, multiple files, pipe input)
+- ✅ Shortcut commands (single file, multiple files)
 - ✅ Explicit format commands with various modes
 - ✅ All CLI subcommands (analyze, schema, paths, search)
 - ✅ Error handling (invalid JSON, nonexistent files)

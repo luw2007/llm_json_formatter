@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum FormatterError {
     #[error("JSON parse error: {0}")]
     ParseError(#[from] serde_json::Error),
+    #[error("JSON/JSON5 parse error: {0}")]
+    JsonOrJson5ParseError(String),
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 }
@@ -39,9 +41,25 @@ pub enum FormatMode {
     Pretty,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JsonSyntax {
+    #[default]
+    Json,
+    Json5,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OutputSyntax {
+    #[default]
+    Auto,
+    Json,
+    Json5,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub mode: FormatMode,
+    pub output_syntax: OutputSyntax,
     pub sort_strategy: SortStrategy,
     pub indent: usize,
     pub inline_limit: usize,
@@ -54,6 +72,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mode: FormatMode::default(),
+            output_syntax: OutputSyntax::Auto,
             sort_strategy: SortStrategy::Smart,
             indent: 2,
             inline_limit: 80,
@@ -97,17 +116,24 @@ impl From<&Value> for ValueType {
 #[derive(Debug, Clone, Default)]
 pub struct JsonIndex {
     path_map: HashMap<String, PathInfo>,
+    key_map: HashMap<String, Vec<String>>,
 }
 
 impl JsonIndex {
     pub fn build(json: &str) -> Result<Self> {
-        let value: Value = serde_json::from_str(json)?;
+        let value = parse_json_or_json5(json)?.0;
         let mut path_map = HashMap::new();
-        Self::traverse(&value, String::new(), &mut path_map);
-        Ok(Self { path_map })
+        let mut key_map = HashMap::new();
+        Self::traverse(&value, String::new(), &mut path_map, &mut key_map);
+        Ok(Self { path_map, key_map })
     }
 
-    fn traverse(val: &Value, path: String, map: &mut HashMap<String, PathInfo>) {
+    fn traverse(
+        val: &Value,
+        path: String,
+        map: &mut HashMap<String, PathInfo>,
+        key_map: &mut HashMap<String, Vec<String>>,
+    ) {
         let info = PathInfo {
             value_type: ValueType::from(val),
             preview: Self::preview(val),
@@ -125,13 +151,14 @@ impl JsonIndex {
                     } else {
                         format!("{}.{}", path, k)
                     };
-                    Self::traverse(v, new_path, map);
+                    key_map.entry(k.clone()).or_default().push(new_path.clone());
+                    Self::traverse(v, new_path, map, key_map);
                 }
             }
             Value::Array(arr) => {
                 for (i, v) in arr.iter().enumerate() {
                     let new_path = format!("{}[{}]", path, i);
-                    Self::traverse(v, new_path, map);
+                    Self::traverse(v, new_path, map, key_map);
                 }
             }
             _ => {}
@@ -155,6 +182,24 @@ impl JsonIndex {
     pub fn list_paths(&self) -> Vec<&String> {
         let mut paths: Vec<_> = self.path_map.keys().collect();
         paths.sort();
+        paths
+    }
+
+    pub fn search_paths_by_key(&self, key_query: &str) -> Vec<String> {
+        let query = key_query.trim().to_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut paths = Vec::new();
+        for (key, key_paths) in &self.key_map {
+            if key.to_lowercase().contains(&query) {
+                paths.extend(key_paths.iter().cloned());
+            }
+        }
+
+        paths.sort();
+        paths.dedup();
         paths
     }
 }
@@ -431,6 +476,19 @@ pub struct LlmJsonFormatter {
     schema_stats: Option<SchemaStats>,
 }
 
+pub fn parse_json_or_json5(input: &str) -> Result<(Value, JsonSyntax)> {
+    match serde_json::from_str::<Value>(input) {
+        Ok(value) => Ok((value, JsonSyntax::Json)),
+        Err(json_error) => match json5::from_str::<Value>(input) {
+            Ok(value) => Ok((value, JsonSyntax::Json5)),
+            Err(json5_error) => Err(FormatterError::JsonOrJson5ParseError(format!(
+                "json error: {}; json5 error: {}",
+                json_error, json5_error
+            ))),
+        },
+    }
+}
+
 impl LlmJsonFormatter {
     pub fn new(config: Config) -> Self {
         Self {
@@ -514,8 +572,9 @@ impl LlmJsonFormatter {
     }
 
     pub fn format(&mut self, json: &str) -> Result<String> {
-        let value: Value = serde_json::from_str(json)?;
+        let (value, detected_syntax) = parse_json_or_json5(json)?;
         let sorted_value = self.deep_sort_keys(&value);
+        let output_syntax = self.resolve_output_syntax(detected_syntax);
 
         // Analyze schema stats for smart formatting
         if self.config.mode == FormatMode::Smart {
@@ -523,14 +582,14 @@ impl LlmJsonFormatter {
         }
 
         match self.config.mode {
-            FormatMode::Compact => Ok(serde_json::to_string(&sorted_value)?),
+            FormatMode::Compact => self.render_compact(&sorted_value, output_syntax),
             FormatMode::Pretty => Ok(serde_json::to_string_pretty(&sorted_value)?),
             FormatMode::Smart => Ok(self.format_smart(&sorted_value, 0, String::new())),
         }
     }
 
     pub fn generate_prompt(&mut self, json: &str) -> Result<String> {
-        let value: Value = serde_json::from_str(json)?;
+        let value = parse_json_or_json5(json)?.0;
         let stats = SchemaStats::analyze(&value);
         let samples = stats.get_samples();
 
@@ -722,8 +781,24 @@ impl LlmJsonFormatter {
     }
 
     pub fn get_metadata(&self, json: &str) -> Result<Metadata> {
-        let value: Value = serde_json::from_str(json)?;
+        let value = parse_json_or_json5(json)?.0;
         Ok(self.analyze(&value))
+    }
+
+    fn resolve_output_syntax(&self, input_syntax: JsonSyntax) -> JsonSyntax {
+        match self.config.output_syntax {
+            OutputSyntax::Auto => input_syntax,
+            OutputSyntax::Json => JsonSyntax::Json,
+            OutputSyntax::Json5 => JsonSyntax::Json5,
+        }
+    }
+
+    fn render_compact(&self, value: &Value, syntax: JsonSyntax) -> Result<String> {
+        match syntax {
+            JsonSyntax::Json => Ok(serde_json::to_string(value)?),
+            JsonSyntax::Json5 => json5::to_string(value)
+                .map_err(|err| FormatterError::JsonOrJson5ParseError(err.to_string())),
+        }
     }
 }
 
@@ -815,5 +890,66 @@ mod tests {
         let input = r#"{"z":1,"a":2,"c":3}"#;
         let result = formatter.format(input).unwrap();
         assert_eq!(result, r#"{"z":1,"a":2,"c":3}"#);
+    }
+
+    #[test]
+    fn test_search_paths_by_key_fuzzy() {
+        let input = r#"{"users":[{"name":"Alice"},{"name":"Bob"}],"meta":{"user_name":"admin"}}"#;
+        let index = JsonIndex::build(input).unwrap();
+
+        let paths = index.search_paths_by_key("na");
+        assert_eq!(paths, vec!["meta.user_name", "users[0].name", "users[1].name"]);
+    }
+
+    #[test]
+    fn test_parse_json5_input() {
+        let mut formatter = LlmJsonFormatter::new(Config {
+            mode: FormatMode::Compact,
+            output_syntax: OutputSyntax::Auto,
+            sort_strategy: SortStrategy::None,
+            ..Default::default()
+        });
+        let input = "{name: 'Alice', age: 30, tags: ['a', 'b',],}";
+        let result = formatter.format(input).unwrap();
+        let value: Value = json5::from_str(&result).unwrap();
+        assert_eq!(value["name"], "Alice");
+    }
+
+    #[test]
+    fn test_compact_json5_output_when_forced() {
+        let mut formatter = LlmJsonFormatter::new(Config {
+            mode: FormatMode::Compact,
+            output_syntax: OutputSyntax::Json5,
+            sort_strategy: SortStrategy::None,
+            ..Default::default()
+        });
+        let input = r#"{"name":"Alice","age":30}"#;
+        let result = formatter.format(input).unwrap();
+        let expected = json5::to_string(&serde_json::from_str::<Value>(input).unwrap()).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_auto_output_syntax_follows_input_syntax() {
+        let mut formatter = LlmJsonFormatter::new(Config {
+            mode: FormatMode::Compact,
+            output_syntax: OutputSyntax::Auto,
+            sort_strategy: SortStrategy::None,
+            ..Default::default()
+        });
+
+        let json_input = r#"{"name":"Alice","age":30}"#;
+        let json_result = formatter.format(json_input).unwrap();
+        assert_eq!(
+            json_result,
+            serde_json::to_string(&serde_json::from_str::<Value>(json_input).unwrap()).unwrap()
+        );
+
+        let json5_input = "{name: 'Alice', age: 30}";
+        let json5_result = formatter.format(json5_input).unwrap();
+        assert_eq!(
+            json5_result,
+            json5::to_string(&json5::from_str::<Value>(json5_input).unwrap()).unwrap()
+        );
     }
 }

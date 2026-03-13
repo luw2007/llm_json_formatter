@@ -1,9 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use llm_json_formatter::{
-    generate_schema, Config, FormatMode, JsonIndex, LlmJsonFormatter, SortStrategy,
+    generate_schema, parse_json_or_json5, Config, FormatMode, JsonIndex, LlmJsonFormatter,
+    OutputSyntax, SortStrategy,
 };
 use std::collections::HashSet;
-use std::io::{self, Read};
+use std::io;
+use std::path::Path;
 
 const EXAMPLES: &str = r#"
 Examples:
@@ -11,23 +13,29 @@ Examples:
   jf data.json
   jf *.json
 
-  # Pipe input shortcut
-  echo '{"users":[{"id":1,"name":"Alice"}]}' | jf
-
   # Default format (Auto-detect entities)
-  echo '{"users":[{"id":1,"name":"Alice"}]}' | jf format
+  jf format data.json
 
   # Generate prompt for LLM to identify entities
-  jf prompt -i data.json
+  jf prompt data.json
+
+  # Fuzzy search paths by key
+  jf search data.json --key name
 
   # Format with specific entities (force single line)
-  jf format -i data.json --entities "users[*],orders[*]"
+  jf format data.json --entities "users[*],orders[*]"
 
   # Compact format (minimized)
-  jf format -i input.json --mode compact
+  jf format input.json --mode compact
 
   # Pretty format (standard indentation)
-  jf format -i input.json --mode pretty
+  jf format input.json --mode pretty
+
+  # Keep input syntax automatically (JSON in -> JSON out, JSON5 in -> JSON5 out)
+  jf format input.json5 --output-syntax auto
+
+  # Force JSON5 output
+  jf format input.json --output-syntax json5
 "#;
 
 #[derive(Parser)]
@@ -45,12 +53,8 @@ struct Cli {
 enum Commands {
     #[command(about = "Format JSON with smart/compact/pretty modes")]
     Format {
-        #[arg(
-            short,
-            long,
-            help = "Input JSON file (reads from stdin if not provided)"
-        )]
-        input: Option<String>,
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
 
         #[arg(short, long, help = "Output file (prints to stdout if not provided)")]
         output: Option<String>,
@@ -71,6 +75,14 @@ enum Commands {
             help = "Key sorting strategy"
         )]
         sort: SortArg,
+
+        #[arg(
+            long,
+            value_enum,
+            default_value = "auto",
+            help = "Output syntax: auto/json/json5"
+        )]
+        output_syntax: OutputSyntaxArg,
 
         #[arg(long, default_value = "2", help = "Indentation spaces")]
         indent: usize,
@@ -105,58 +117,52 @@ enum Commands {
 
     #[command(about = "Generate LLM prompt to identify entities")]
     Prompt {
-        #[arg(
-            short,
-            long,
-            help = "Input JSON file (reads from stdin if not provided)"
-        )]
-        input: Option<String>,
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
     },
 
     #[command(about = "Analyze JSON structure")]
     Analyze {
-        #[arg(
-            short,
-            long,
-            help = "Input JSON file (reads from stdin if not provided)"
-        )]
-        input: Option<String>,
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
     },
 
-    #[command(about = "Search value by JSON path (e.g., users[0].name)")]
+    #[command(about = "Search by JSON path or fuzzy key")]
     Search {
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
+
         #[arg(
             short,
             long,
-            help = "Input JSON file (reads from stdin if not provided)"
+            help = "JSON path to search",
+            required_unless_present = "key",
+            conflicts_with = "key"
         )]
-        input: Option<String>,
+        path: Option<String>,
 
-        #[arg(short, long, help = "JSON path to search")]
-        path: String,
+        #[arg(
+            long,
+            help = "Fuzzy key query to search matched paths (case-insensitive)",
+            required_unless_present = "path",
+            conflicts_with = "path"
+        )]
+        key: Option<String>,
 
-        #[arg(short, long, help = "Output full JSON value instead of preview")]
+        #[arg(short, long, help = "Output full JSON value instead of preview", conflicts_with = "key")]
         full: bool,
     },
 
     #[command(about = "List all available paths in JSON")]
     Paths {
-        #[arg(
-            short,
-            long,
-            help = "Input JSON file (reads from stdin if not provided)"
-        )]
-        input: Option<String>,
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
     },
 
     #[command(about = "Extract compact schema from JSON")]
     Schema {
-        #[arg(
-            short,
-            long,
-            help = "Input JSON file (reads from stdin if not provided)"
-        )]
-        input: Option<String>,
+        #[arg(value_name = "INPUT", help = "Input JSON file path")]
+        input: String,
     },
 }
 
@@ -180,15 +186,18 @@ enum SortArg {
     None,
 }
 
-fn read_input(input: Option<String>) -> io::Result<String> {
-    match input {
-        Some(path) => std::fs::read_to_string(path),
-        None => {
-            let mut buffer = String::new();
-            io::stdin().read_to_string(&mut buffer)?;
-            Ok(buffer)
-        }
-    }
+#[derive(Clone, ValueEnum)]
+enum OutputSyntaxArg {
+    #[value(help = "Auto-detect from input syntax")]
+    Auto,
+    #[value(help = "Force JSON output")]
+    Json,
+    #[value(help = "Force JSON5 output")]
+    Json5,
+}
+
+fn read_input(path: &str) -> io::Result<String> {
+    std::fs::read_to_string(path)
 }
 
 fn write_output(output: Option<String>, content: &str) -> io::Result<()> {
@@ -204,28 +213,6 @@ fn write_output(output: Option<String>, content: &str) -> io::Result<()> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() == 1 {
-        use std::io::IsTerminal;
-        if !io::stdin().is_terminal() {
-            let format_args = vec![args[0].clone(), "format".to_string()];
-
-            let cli = match Cli::try_parse_from(format_args) {
-                Ok(cli) => cli,
-                Err(e) => {
-                    eprintln!("Error parsing arguments: {}", e);
-                    std::process::exit(1);
-                }
-            };
-
-            let result = execute_command(cli.command);
-            if let Err(e) = result {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
-            return;
-        }
-    }
-
     if args.len() >= 2
         && !args[1].starts_with('-')
         && !matches!(
@@ -233,11 +220,19 @@ fn main() {
             "format" | "prompt" | "analyze" | "search" | "paths" | "schema" | "help"
         )
     {
-        let file_path = &args[1];
-        if file_path.ends_with(".json") {
+        let all_are_existing_files = args.iter().skip(1).all(|arg| Path::new(arg).is_file());
+        let all_are_json_or_json5_names = args
+            .iter()
+            .skip(1)
+            .all(|arg| arg.ends_with(".json") || arg.ends_with(".json5"));
+
+        if all_are_existing_files || all_are_json_or_json5_names {
             for arg in args.iter().skip(1) {
-                if !arg.ends_with(".json") {
-                    eprintln!("Error: All arguments must be JSON files when using shortcut mode");
+                if !Path::new(arg).is_file() && !arg.ends_with(".json") && !arg.ends_with(".json5")
+                {
+                    eprintln!(
+                        "Error: All arguments must be existing files or JSON/JSON5 file names when using shortcut mode"
+                    );
                     std::process::exit(1);
                 }
             }
@@ -246,7 +241,6 @@ fn main() {
                 let format_args = vec![
                     args[0].clone(),
                     "format".to_string(),
-                    "-i".to_string(),
                     file_arg.clone(),
                 ];
 
@@ -283,13 +277,14 @@ fn execute_command(command: Commands) -> io::Result<()> {
             output,
             mode,
             sort,
+            output_syntax,
             indent,
             inline_limit,
             array_item_inline_limit,
             entity_threshold,
             entities,
         } => {
-            let json = match read_input(input) {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -335,6 +330,11 @@ fn execute_command(command: Commands) -> io::Result<()> {
 
             let config = Config {
                 mode: format_mode,
+                output_syntax: match output_syntax {
+                    OutputSyntaxArg::Auto => OutputSyntax::Auto,
+                    OutputSyntaxArg::Json => OutputSyntax::Json,
+                    OutputSyntaxArg::Json5 => OutputSyntax::Json5,
+                },
                 sort_strategy,
                 indent,
                 inline_limit,
@@ -354,7 +354,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
         }
 
         Commands::Prompt { input } => {
-            let json = match read_input(input) {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -376,7 +376,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
         }
 
         Commands::Analyze { input } => {
-            let json = match read_input(input) {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -403,8 +403,13 @@ fn execute_command(command: Commands) -> io::Result<()> {
             }
         }
 
-        Commands::Search { input, path, full } => {
-            let json = match read_input(input) {
+        Commands::Search {
+            input,
+            path,
+            key,
+            full,
+        } => {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -414,17 +419,36 @@ fn execute_command(command: Commands) -> io::Result<()> {
 
             match JsonIndex::build(&json) {
                 Ok(index) => {
-                    if let Some(info) = index.search(&path) {
-                        if full {
-                            println!("{}", serde_json::to_string_pretty(&info.full_value).unwrap_or_default());
+                    if let Some(path) = path {
+                        if let Some(info) = index.search(&path) {
+                            if full {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&info.full_value).unwrap_or_default()
+                                );
+                            } else {
+                                println!("Path: {}", path);
+                                println!("Type: {:?}", info.value_type);
+                                println!("Preview: {}", info.preview);
+                            }
+                            Ok(())
                         } else {
-                            println!("Path: {}", path);
-                            println!("Type: {:?}", info.value_type);
-                            println!("Preview: {}", info.preview);
+                            eprintln!("Path not found: {}", path);
+                            std::process::exit(1);
                         }
-                        Ok(())
+                    } else if let Some(key) = key {
+                        let paths = index.search_paths_by_key(&key);
+                        if paths.is_empty() {
+                            eprintln!("No matched paths for key query: {}", key);
+                            std::process::exit(1);
+                        } else {
+                            for path in paths {
+                                println!("{}", path);
+                            }
+                            Ok(())
+                        }
                     } else {
-                        eprintln!("Path not found: {}", path);
+                        eprintln!("Either --path or --key must be provided");
                         std::process::exit(1);
                     }
                 }
@@ -436,7 +460,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
         }
 
         Commands::Paths { input } => {
-            let json = match read_input(input) {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -459,7 +483,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
         }
 
         Commands::Schema { input } => {
-            let json = match read_input(input) {
+            let json = match read_input(&input) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error reading input: {}", e);
@@ -467,7 +491,7 @@ fn execute_command(command: Commands) -> io::Result<()> {
                 }
             };
 
-            match serde_json::from_str::<serde_json::Value>(&json) {
+            match parse_json_or_json5(&json).map(|(value, _)| value) {
                 Ok(value) => {
                     let schema = generate_schema(&value, 0);
                     println!("{}", schema);

@@ -21,7 +21,7 @@ description: Format, analyze, and manipulate JSON data with LLM-optimized output
 ### 格式化 JSON
 
 ```bash
-jf format [OPTIONS]
+jf format <INPUT> [OPTIONS]
 ```
 
 **常用选项：**
@@ -36,25 +36,25 @@ jf format [OPTIONS]
 
 ```bash
 # 使用 Smart 模式（默认）- 自动检测实体并保持单行
-echo '{"users":[{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]}' | jf format
+jf format data.json
 
 # 紧凑模式 - 最小 token 使用
-echo '{"data":"value"}' | jf format --mode compact
+jf format data.json --mode compact
 
 # Pretty 模式 - 最大可读性
-echo '{"data":"value"}' | jf format --mode pretty
+jf format data.json --mode pretty
 
 # 手动指定实体
-echo '{"users":[...]}' | jf format --entities "users[*]"
+jf format data.json --entities "users[*]"
 
 # 智能键排序（id/name 优先）
-echo '{"_internal":1,"id":100,"name":"test"}' | jf format --sort smart
+jf format data.json --sort smart
 ```
 
 ### 分析 JSON 结构
 
 ```bash
-jf analyze
+jf analyze <INPUT>
 ```
 
 获取 JSON 的结构信息：字节大小、最大深度、对象数量、键总数、数组数量、最大数组长度。
@@ -62,7 +62,7 @@ jf analyze
 **示例：**
 
 ```bash
-echo '{"users":[{"id":1,"name":"Alice"}]}' | jf analyze
+jf analyze data.json
 # 输出：
 # JSON Analysis:
 #   Byte Size: 35 bytes
@@ -76,7 +76,7 @@ echo '{"users":[{"id":1,"name":"Alice"}]}' | jf analyze
 ### 路径查询
 
 ```bash
-jf search --path <PATH>
+jf search <INPUT> --path <PATH>
 ```
 
 使用 JSON 路径查询特定值（如 `users[0].name`）。
@@ -84,14 +84,14 @@ jf search --path <PATH>
 **示例：**
 
 ```bash
-echo '{"users":[{"id":1,"name":"Alice"}]}' | jf search --path "users[0].name"
+jf search data.json --path "users[0].name"
 # 输出：Alice
 ```
 
 ### 列出所有路径
 
 ```bash
-jf paths
+jf paths <INPUT>
 ```
 
 列出 JSON 对象中所有可用的路径。
@@ -99,7 +99,7 @@ jf paths
 **示例：**
 
 ```bash
-echo '{"users":[{"id":1,"name":"Alice"}]}' | jf paths
+jf paths data.json
 # 输出：
 # users
 # users[0]
@@ -167,7 +167,7 @@ echo '{"users":[{"id":1,"name":"Alice"}]}' | jf paths
 基于 P90 长度分析自动识别实体。如果数组项的 P90 长度 ≤ `entity-threshold`（默认 2000），则标记为实体。
 
 ```bash
-jf format --entity-threshold 1500
+jf format data.json --entity-threshold 1500
 ```
 
 ### 手动指定
@@ -176,13 +176,13 @@ jf format --entity-threshold 1500
 
 ```bash
 # 逗号分隔格式
-jf format --entities "users[*],orders[*],products[*]"
+jf format data.json --entities "users[*],orders[*],products[*]"
 
 # JSON 数组格式
-jf format --entities '["users[*]","orders[*]"]'
+jf format data.json --entities '["users[*]","orders[*]"]'
 
 # 禁用自动检测
-jf format --entity-threshold 0 --entities "users[*]"
+jf format data.json --entity-threshold 0 --entities "users[*]"
 ```
 
 ## 键排序策略
@@ -206,22 +206,19 @@ jf format --entity-threshold 0 --entities "users[*]"
 使用方式：
 
 ```bash
-jf format --sort smart
+jf format data.json --sort smart
 ```
 
 ## 输入/输出
 
-所有命令默认从 stdin 读取，输出到 stdout：
+所有命令都需要显式传入 JSON 文件路径，默认输出到 stdout：
 
 ```bash
-# 从 stdin
-echo '{"data":"value"}' | jf format
-
 # 从文件
-cat data.json | jf format
+jf format data.json
 
 # 保存到文件
-jf format < input.json > output.json
+jf format input.json > output.json
 ```
 
 ## 工作流示例
@@ -230,37 +227,37 @@ jf format < input.json > output.json
 
 ```bash
 # 使用 Smart 模式优化 token 使用
-curl https://api.example.com/data | jf format --mode smart
+jf format data.json --mode smart
 ```
 
 ### 场景 2：查找特定值
 
 ```bash
 # 先列出所有路径
-cat data.json | jf paths
+jf paths data.json
 
 # 然后查询特定路径
-cat data.json | jf search --path "config.database.host"
+jf search data.json --path "config.database.host"
 ```
 
 ### 场景 3：分析大型 JSON
 
 ```bash
 # 先分析结构
-cat large.json | jf analyze
+jf analyze large.json
 
 # 如果数组很多，手动指定实体以优化输出
-cat large.json | jf format --entities "users[*],orders[*]"
+jf format large.json --entities "users[*],orders[*]"
 ```
 
 ### 场景 4：调试和对比
 
 ```bash
 # Pretty 模式用于人类阅读
-cat data.json | jf format --mode pretty > readable.json
+jf format data.json --mode pretty > readable.json
 
 # Smart 模式用于 LLM
-cat data.json | jf format --mode smart > llm-optimized.json
+jf format data.json --mode smart > llm-optimized.json
 
 # 对比文件大小
 ls -lh readable.json llm-optimized.json
@@ -296,10 +293,10 @@ ls -lh readable.json llm-optimized.json
 
 ```bash
 # 错误：无效的 JSON
-echo 'not json' | jf format
+jf format invalid.json
 # Error: JSON parsing failed
 
 # 错误：路径不存在
-echo '{"a":1}' | jf search --path "b.c"
+jf search data.json --path "b.c"
 # Path not found: b.c
 ```

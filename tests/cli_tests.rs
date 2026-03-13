@@ -25,20 +25,9 @@ fn test_shortcut_multiple_files() {
 }
 
 #[test]
-fn test_shortcut_pipe_input() {
-    let mut cmd = Command::cargo_bin("jf").unwrap();
-    cmd.write_stdin(r#"{"test":"value","number":123}"#)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("test"))
-        .stdout(predicate::str::contains("number"));
-}
-
-#[test]
 fn test_explicit_format_command() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("format")
-        .arg("-i")
         .arg("test_data.json")
         .assert()
         .success()
@@ -49,7 +38,6 @@ fn test_explicit_format_command() {
 fn test_format_with_mode_compact() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("format")
-        .arg("-i")
         .arg("test_data.json")
         .arg("--mode")
         .arg("compact")
@@ -62,7 +50,6 @@ fn test_format_with_mode_compact() {
 fn test_format_with_mode_pretty() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("format")
-        .arg("-i")
         .arg("test_data.json")
         .arg("--mode")
         .arg("pretty")
@@ -72,22 +59,57 @@ fn test_format_with_mode_pretty() {
 }
 
 #[test]
-fn test_pipe_with_compact_mode() {
+fn test_format_with_output_syntax_json5() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
-    cmd.write_stdin(r#"{"test":"value"}"#)
-        .arg("format")
+    cmd.arg("format")
+        .arg("test_data.json")
         .arg("--mode")
         .arg("compact")
+        .arg("--output-syntax")
+        .arg("json5")
         .assert()
         .success()
-        .stdout(predicate::str::is_match(r#"\{"test":"value"\}"#).unwrap());
+        .stdout(predicate::str::contains("users"));
+}
+
+#[test]
+fn test_shortcut_json5_file() {
+    let temp_file = "temp_input.json5";
+    fs::write(
+        temp_file,
+        "{users:[{id:1,name:'Alice'},{id:2,name:'Bob'}],meta:{count:2}}",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg(temp_file)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("users"))
+        .stdout(predicate::str::contains("Alice"));
+
+    fs::remove_file(temp_file).unwrap();
+}
+
+#[test]
+fn test_shortcut_file_without_extension() {
+    let temp_file = "temp_input_no_ext";
+    fs::write(temp_file, r#"{"users":[{"id":1,"name":"Alice"}]}"#).unwrap();
+
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg(temp_file)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("users"))
+        .stdout(predicate::str::contains("Alice"));
+
+    fs::remove_file(temp_file).unwrap();
 }
 
 #[test]
 fn test_analyze_command() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("analyze")
-        .arg("-i")
         .arg("test_data.json")
         .assert()
         .success()
@@ -100,7 +122,6 @@ fn test_analyze_command() {
 fn test_schema_command() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("schema")
-        .arg("-i")
         .arg("test_data.json")
         .assert()
         .success()
@@ -112,7 +133,6 @@ fn test_schema_command() {
 fn test_paths_command() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("paths")
-        .arg("-i")
         .arg("test_data.json")
         .assert()
         .success()
@@ -124,13 +144,25 @@ fn test_paths_command() {
 fn test_search_command() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("search")
-        .arg("-i")
         .arg("test_data.json")
         .arg("-p")
         .arg("users[0].name")
         .assert()
         .success()
         .stdout(predicate::str::contains("Alice"));
+}
+
+#[test]
+fn test_search_key_fuzzy_command() {
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg("search")
+        .arg("test_data.json")
+        .arg("--key")
+        .arg("na")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("users[0].name"))
+        .stdout(predicate::str::contains("users[1].name"));
 }
 
 #[test]
@@ -160,7 +192,7 @@ fn test_help_displays_examples() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Quick format"))
-        .stdout(predicate::str::contains("Pipe input shortcut"))
+        .stdout(predicate::str::contains("Default format"))
         .stdout(predicate::str::contains("jf data.json"));
 }
 
@@ -175,22 +207,36 @@ fn test_version_flag() {
 
 #[test]
 fn test_shortcut_preserves_key_order_alphabetic() {
+    let temp_file = "temp_key_order.json";
+    fs::write(temp_file, r#"{"z":1,"a":2,"m":3}"#).unwrap();
+
     let mut cmd = Command::cargo_bin("jf").unwrap();
-    cmd.write_stdin(r#"{"z":1,"a":2,"m":3}"#)
+    cmd.arg(temp_file)
         .assert()
         .success()
         .stdout(predicate::str::is_match(r#"\{"a":2,"m":3,"z":1\}"#).unwrap());
+
+    fs::remove_file(temp_file).unwrap();
 }
 
 #[test]
 fn test_format_with_entities_option() {
     let mut cmd = Command::cargo_bin("jf").unwrap();
     cmd.arg("format")
-        .arg("-i")
         .arg("test_data.json")
         .arg("--entities")
         .arg("users[*]")
         .assert()
         .success()
         .stdout(predicate::str::contains("users"));
+}
+
+#[test]
+fn test_format_requires_input_file() {
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg("format")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Usage:"))
+        .stderr(predicate::str::contains("<INPUT>"));
 }

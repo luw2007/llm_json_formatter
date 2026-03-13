@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-03-13
+
+### Added
+
+- **JSON5 Input/Output**: Add JSON5 parsing and output syntax control for formatter
+  - New `--output-syntax` option: `auto` / `json` / `json5`
+  - `auto` now follows detected input syntax (JSON input -> JSON output, JSON5 input -> JSON5 output)
+  - Shortcut mode now accepts both `.json` and `.json5` files
+  - `schema` command now accepts JSON5 input
+
+### Changed
+
+- **CLI Input Argument**: Make JSON file a required positional argument for all input-based subcommands
+  - `format`, `prompt`, `analyze`, `search`, `paths`, `schema` now use `<INPUT>` instead of `-i/--input`
+  - Remove stdin fallback for `format` and remove implicit pipe shortcut
+  - Keep direct file shortcut `jf data.json`, now mapped to `jf format data.json`
+- **Documentation and Tests**: Update command examples and integration tests to the new positional-input syntax
+
 ## [0.1.4] - 2026-03-09
 
 ### Added
