@@ -3,6 +3,9 @@ use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
+mod heuristics;
+use crate::heuristics::{is_map_like, key_weight, merge_objects, type_signature, MapKind};
+
 #[derive(Error, Debug)]
 pub enum FormatterError {
     #[error("JSON parse error: {0}")]
@@ -240,23 +243,7 @@ impl SchemaStats {
 
         match val {
             Value::Object(obj) => {
-                // Check if this object is a "map" (all values have same base type)
-                let is_map = if obj.len() >= 2 {
-                    let base_types: std::collections::HashSet<_> = obj
-                        .values()
-                        .map(|v| match v {
-                            Value::Null => "null",
-                            Value::Bool(_) => "boolean",
-                            Value::Number(_) => "number",
-                            Value::String(_) => "string",
-                            Value::Array(_) => "array",
-                            Value::Object(_) => "object",
-                        })
-                        .collect();
-                    base_types.len() == 1
-                } else {
-                    false
-                };
+                let is_map = is_map_like(obj).is_some();
 
                 for (k, v) in obj {
                     let new_path = if is_map {
@@ -317,76 +304,6 @@ impl SchemaStats {
     }
 }
 
-fn get_type_signature(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(_) => "boolean".to_string(),
-        Value::Number(_) => "number".to_string(),
-        Value::String(_) => "string".to_string(),
-        Value::Array(arr) => {
-            if arr.is_empty() {
-                "[]".to_string()
-            } else {
-                format!("[{}]", get_type_signature(&arr[0]))
-            }
-        }
-        Value::Object(obj) => {
-            if obj.is_empty() {
-                "{}".to_string()
-            } else {
-                let mut sigs: Vec<_> = obj
-                    .iter()
-                    .map(|(k, v)| format!("{}:{}", k, get_type_signature(v)))
-                    .collect();
-                sigs.sort();
-                format!("{{{}}}", sigs.join(","))
-            }
-        }
-    }
-}
-
-fn merge_objects<'a>(objects: impl Iterator<Item = &'a Map<String, Value>>) -> Map<String, Value> {
-    let mut merged: Map<String, Value> = Map::new();
-    for obj in objects {
-        for (k, v) in obj {
-            merged.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-    }
-    merged
-}
-
-fn get_base_type(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
-fn calculate_key_weight(key: &str) -> i32 {
-    let mut weight = 0;
-
-    if matches!(
-        key,
-        "id" | "name" | "type" | "status" | "title" | "key" | "value"
-    ) {
-        weight += 100;
-    }
-
-    if key.starts_with('_') || key.contains("internal") {
-        weight -= 50;
-    }
-
-    if key.contains("debug") || key.contains("test") {
-        weight -= 30;
-    }
-
-    weight
-}
-
 pub fn generate_schema(value: &Value, indent: usize) -> String {
     let prefix = "  ".repeat(indent);
     match value {
@@ -412,11 +329,10 @@ pub fn generate_schema(value: &Value, indent: usize) -> String {
             } else {
                 let mut type_groups: HashMap<String, Vec<(&String, &Value)>> = HashMap::new();
                 for (k, v) in obj {
-                    let sig = get_type_signature(v);
+                    let sig = type_signature(v);
                     type_groups.entry(sig).or_default().push((k, v));
                 }
 
-                // Case 1: All values have exactly same type signature
                 if type_groups.len() == 1 && obj.len() >= 2 {
                     let (_, items) = type_groups.iter().next().unwrap();
                     let (_, sample_val) = items[0];
@@ -424,36 +340,33 @@ pub fn generate_schema(value: &Value, indent: usize) -> String {
                     return format!("map[string]{}", val_schema);
                 }
 
-                // Case 2: All values are objects (but with different fields) - merge them
-                let all_objects = obj.values().all(|v| matches!(v, Value::Object(_)));
-                if all_objects && obj.len() >= 2 {
-                    let objects_iter = obj.values().filter_map(|v| {
-                        if let Value::Object(o) = v {
-                            Some(o)
-                        } else {
-                            None
+                if let Some(map_kind) = is_map_like(obj) {
+                    match map_kind {
+                        MapKind::ObjectMerged => {
+                            let objects_iter = obj.values().filter_map(|v| {
+                                if let Value::Object(o) = v {
+                                    Some(o)
+                                } else {
+                                    None
+                                }
+                            });
+                            let merged = merge_objects(objects_iter);
+                            let merged_value = Value::Object(merged);
+                            let val_schema = generate_schema(&merged_value, indent + 1);
+                            return format!("map[string]{}", val_schema);
                         }
-                    });
-                    let merged = merge_objects(objects_iter);
-                    let merged_value = Value::Object(merged);
-                    let val_schema = generate_schema(&merged_value, indent + 1);
-                    return format!("map[string]{}", val_schema);
+                        MapKind::Primitive(base_type) => {
+                            return format!("map[string]{}", base_type);
+                        }
+                    }
                 }
 
-                // Case 3: All values are same primitive type
-                let base_types: HashSet<_> = obj.values().map(get_base_type).collect();
-                if base_types.len() == 1 && obj.len() >= 2 {
-                    let base_type = base_types.into_iter().next().unwrap();
-                    return format!("map[string]{}", base_type);
-                }
-
-                // Default: enumerate all keys
                 let mut lines = vec!["{".to_string()];
                 let inner_prefix = "  ".repeat(indent + 1);
                 let mut keys: Vec<_> = obj.keys().collect();
                 keys.sort_by(|a, b| {
-                    let weight_a = calculate_key_weight(a);
-                    let weight_b = calculate_key_weight(b);
+                    let weight_a = key_weight(a);
+                    let weight_b = key_weight(b);
                     match weight_b.cmp(&weight_a) {
                         std::cmp::Ordering::Equal => a.cmp(b),
                         other => other,
@@ -680,12 +593,7 @@ impl LlmJsonFormatter {
                     return "{}".to_string();
                 }
 
-                let is_map = if obj.len() >= 2 {
-                    let base_types: HashSet<_> = obj.values().map(get_base_type).collect();
-                    base_types.len() == 1
-                } else {
-                    false
-                };
+                let is_map = is_map_like(obj).is_some();
 
                 let mut s = String::from("{\n");
                 for (i, (k, v)) in obj.iter().enumerate() {
@@ -742,8 +650,8 @@ impl LlmJsonFormatter {
             }
             SortStrategy::Smart => {
                 items.sort_by(|a, b| {
-                    let weight_a = Self::calculate_weight(a.0);
-                    let weight_b = Self::calculate_weight(b.0);
+                    let weight_a = key_weight(a.0);
+                    let weight_b = key_weight(b.0);
                     match weight_b.cmp(&weight_a) {
                         std::cmp::Ordering::Equal => a.0.cmp(b.0),
                         other => other,
@@ -757,27 +665,6 @@ impl LlmJsonFormatter {
             .into_iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
-    }
-
-    fn calculate_weight(key: &str) -> i32 {
-        let mut weight = 0;
-
-        if matches!(
-            key,
-            "id" | "name" | "type" | "status" | "title" | "key" | "value"
-        ) {
-            weight += 100;
-        }
-
-        if key.starts_with('_') || key.contains("internal") {
-            weight -= 50;
-        }
-
-        if key.contains("debug") || key.contains("test") {
-            weight -= 30;
-        }
-
-        weight
     }
 
     pub fn get_metadata(&self, json: &str) -> Result<Metadata> {
@@ -951,5 +838,41 @@ mod tests {
             json5_result,
             json5::to_string(&json5::from_str::<Value>(json5_input).unwrap()).unwrap()
         );
+    }
+
+    #[test]
+    fn test_generate_prompt_uses_wildcard_for_object_map_paths() {
+        let input = r#"{"by_id":{"u1":{"name":"Alice"},"u2":{"age":30}}}"#;
+        let mut formatter = LlmJsonFormatter::new(Config::default());
+        let prompt = formatter.generate_prompt(input).unwrap();
+        assert!(prompt.contains("Path: by_id[*]"));
+    }
+
+    #[test]
+    fn test_generate_schema_merges_object_map_fields() {
+        let value: Value =
+            serde_json::from_str(r#"{"by_id":{"u1":{"name":"Alice"},"u2":{"age":30}}}"#).unwrap();
+        let schema = generate_schema(&value, 0);
+        assert!(schema.contains("\"name\": string"));
+        assert!(schema.contains("\"age\": number"));
+        assert!(schema.contains("by_id"));
+    }
+
+    #[test]
+    fn test_smart_weight_order_is_consistent_between_schema_and_formatter() {
+        let input = r#"{"zzz":1,"name":"Alice","_internal":2,"id":100}"#;
+        let mut formatter = LlmJsonFormatter::new(Config::default());
+        let formatted = formatter.format(input).unwrap();
+        assert_eq!(formatted, r#"{"id":100,"name":"Alice","zzz":1,"_internal":2}"#);
+
+        let value: Value = serde_json::from_str(input).unwrap();
+        let schema = generate_schema(&value, 0);
+        let id_pos = schema.find("\"id\":").unwrap();
+        let name_pos = schema.find("\"name\":").unwrap();
+        let zzz_pos = schema.find("\"zzz\":").unwrap();
+        let internal_pos = schema.find("\"_internal\":").unwrap();
+        assert!(id_pos < name_pos);
+        assert!(name_pos < zzz_pos);
+        assert!(zzz_pos < internal_pos);
     }
 }

@@ -240,3 +240,39 @@ fn test_format_requires_input_file() {
         .stderr(predicate::str::contains("Usage:"))
         .stderr(predicate::str::contains("<INPUT>"));
 }
+
+#[test]
+fn test_pipe_shortcut_without_args() {
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.write_stdin(r#"{"users":[{"id":1,"name":"Alice"}]}"#)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("users"))
+        .stdout(predicate::str::contains("Alice"));
+}
+
+#[test]
+fn test_pipe_shortcut_with_double_dash() {
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg("--")
+        .write_stdin(r#"{"users":[{"id":2,"name":"Bob"}]}"#)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("users"))
+        .stdout(predicate::str::contains("Bob"));
+}
+
+#[test]
+fn test_prompt_uses_wildcard_for_object_map_paths() {
+    let temp_file = "temp_prompt_map.json";
+    fs::write(temp_file, r#"{"by_id":{"u1":{"name":"Alice"},"u2":{"age":30}}}"#).unwrap();
+
+    let mut cmd = Command::cargo_bin("jf").unwrap();
+    cmd.arg("prompt")
+        .arg(temp_file)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Path: by_id[*]"));
+
+    fs::remove_file(temp_file).unwrap();
+}

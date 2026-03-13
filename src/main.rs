@@ -4,11 +4,15 @@ use llm_json_formatter::{
     OutputSyntax, SortStrategy,
 };
 use std::collections::HashSet;
-use std::io;
+use std::io::{self, IsTerminal, Read};
 use std::path::Path;
 
 const EXAMPLES: &str = r#"
 Examples:
+  # Format JSON from stdin
+  cat data.json | jf
+  cat data.json | jf --
+
   # Quick format (shortcut, defaults to smart mode)
   jf data.json
   jf *.json
@@ -197,6 +201,11 @@ enum OutputSyntaxArg {
 }
 
 fn read_input(path: &str) -> io::Result<String> {
+    if path == "-" {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer)?;
+        return Ok(buffer);
+    }
     std::fs::read_to_string(path)
 }
 
@@ -212,6 +221,25 @@ fn write_output(output: Option<String>, content: &str) -> io::Result<()> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let stdin_is_piped = !io::stdin().is_terminal();
+
+    if stdin_is_piped && (args.len() == 1 || (args.len() == 2 && args[1] == "--")) {
+        let format_args = vec![args[0].clone(), "format".to_string(), "-".to_string()];
+        let cli = match Cli::try_parse_from(format_args) {
+            Ok(cli) => cli,
+            Err(e) => {
+                eprintln!("Error parsing arguments: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let result = execute_command(cli.command);
+        if let Err(e) = result {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     if args.len() >= 2
         && !args[1].starts_with('-')
